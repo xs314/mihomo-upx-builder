@@ -1,0 +1,17 @@
+# Binaries & archives
+*.tar.gz
+*.zip
+*.sha256
+sha256sums.txt
+mihomo
+mihomo-src/
+dist/
+release-pkgs/
+
+# OS and Editor files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/
+.idea/

@@ -1,0 +1,195 @@
+name: Build Mihomo UPX (Multi-Arch)
+
+on:
+  schedule:
+    # 每天 UTC 20:00 (北京时间 04:00) 自动检测上游 Release
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: '指定构建的上游 tag (留空则自动获取最新 release)'
+        required: false
+        type: string
+        default: ''
+      force_build:
+        description: '是否强制重新构建 (即使该 tag 已发布)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      target_tag: ${{ steps.check.outputs.target_tag }}
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - name: Check Upstream Version
+        id: check
+        run: |
+          INPUT_TAG="${{ github.event.inputs.target_tag }}"
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+            echo "使用用户指定的构建版本: $TAG"
+          else
+            TAG=$(curl -sL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
+            echo "上游最新版本为: $TAG"
+          fi
+
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "无法获取有效的版本号，终止构建。"
+            exit 1
+          fi
+
+          echo "target_tag=$TAG" >> $GITHUB_OUTPUT
+
+          # 检查本仓库是否已经有了该 tag 的 release
+          EXISTING_TAG=$(curl -sL https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG | jq -r .tag_name)
+          if [ "$EXISTING_TAG" != "$TAG" ] || [ "${{ github.event.inputs.force_build }}" = "true" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "需要构建新版本: $TAG"
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "本仓库已存在版本 $TAG，跳过构建。"
+          fi
+
+  build:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - os: linux
+            arch: arm64
+            goarm: ''
+            goamd64: ''
+            name: linux-arm64
+          - os: linux
+            arch: amd64
+            goarm: ''
+            goamd64: v1
+            name: linux-amd64
+          - os: linux
+            arch: amd64
+            goarm: ''
+            goamd64: v3
+            name: linux-amd64-v3
+          - os: linux
+            arch: arm
+            goarm: '7'
+            goamd64: ''
+            name: linux-armv7
+        flavor:
+          - name: nogvisor
+            tags: ''
+          - name: gvisor
+            tags: with_gvisor
+
+    steps:
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Install UPX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y upx-ucl
+
+      - name: Checkout Upstream Mihomo
+        uses: actions/checkout@v4
+        with:
+          repository: 'MetaCubeX/mihomo'
+          ref: ${{ needs.check-version.outputs.target_tag }}
+          path: 'mihomo-src'
+
+      - name: Compile and UPX Compress
+        working-directory: ./mihomo-src
+        run: |
+          export GOOS=${{ matrix.target.os }}
+          export GOARCH=${{ matrix.target.arch }}
+          export CGO_ENABLED=0
+
+          if [ -n "${{ matrix.target.goarm }}" ]; then
+            export GOARM=${{ matrix.target.goarm }}
+          fi
+          if [ -n "${{ matrix.target.goamd64 }}" ]; then
+            export GOAMD64=${{ matrix.target.goamd64 }}
+          fi
+
+          BUILD_TAGS=""
+          if [ -n "${{ matrix.flavor.tags }}" ]; then
+            BUILD_TAGS="-tags ${{ matrix.flavor.tags }}"
+          fi
+
+          VERSION="${{ needs.check-version.outputs.target_tag }}"
+          echo "正在编译: ${{ matrix.target.name }} (${{ matrix.flavor.name }}) @ $VERSION ..."
+
+          go build -v -trimpath -ldflags "-s -w -X 'github.com/metacubex/mihomo/constant.Version=${VERSION}'" $BUILD_TAGS -o mihomo
+
+          echo "=== 原始二进制大小 ==="
+          ls -lh mihomo
+
+          echo "=== 执行 UPX 加壳压缩 ==="
+          upx --best --lzma mihomo
+
+          echo "=== 压缩后大小 ==="
+          ls -lh mihomo
+
+          PKG_NAME="mihomo-${{ matrix.target.name }}-${VERSION}-${{ matrix.flavor.name }}-upx.tar.gz"
+          tar -czvf "../${PKG_NAME}" mihomo
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.target.name }}-${{ matrix.flavor.name }}
+          path: mihomo-*.tar.gz
+          retention-days: 1
+
+  release:
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-pkgs
+          merge-multiple: true
+
+      - name: Generate SHA256 Checksums
+        working-directory: release-pkgs
+        run: |
+          ls -lh
+          sha256sum mihomo-*.tar.gz > sha256sums.txt
+          cat sha256sums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check-version.outputs.target_tag }}
+          name: "Mihomo ${{ needs.check-version.outputs.target_tag }} (UPX Multi-Arch)"
+          body: |
+            ## 🚀 Mihomo UPX Multi-Architecture Release
+
+            基于上游官方 [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) 源码（Tag: `${{ needs.check-version.outputs.target_tag }}`）自动构建的 UPX 极简精简版本。
+
+            ### 📦 版本说明 (Flavor)
+            - **`nogvisor`（极限体积版，推荐 OpenWrt / 小闪存路由器）**：
+              - 剥离用户态 gVisor 协议栈，仅使用 Linux 原生系统网络栈（System Stack，`tun.stack: system`）。
+              - 体积极小（压缩后约 **9 ~ 11 MB**），内存开销极低，转发吞吐高。
+            - **`gvisor`（全功能版）**：
+              - 保留完整 gVisor 用户态协议栈，支持混合模式（`tun.stack: mixed/gvisor`）。
+              - 压缩后约 **13 ~ 15 MB**。
+
+            ### 💡 路由器一键安装 / 热升级
+            ```bash
+            sh -c "$(curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/master/install.sh)"
+            ```
+          files: |
+            release-pkgs/mihomo-*.tar.gz
+            release-pkgs/sha256sums.txt
