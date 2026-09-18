@@ -15,35 +15,49 @@
 - 🤖 **全自动云端同步**：每天定时检测上游 Release，新版本发布时自动触发 Actions 编译并发布 Release。
 - 📉 **极限体积瘦身**：Go 编译期剥离符号表（`-s -w`）+ UPX `--best --lzma` 加壳，体积直降 **75% ~ 80%**。
 - 🧩 **双风味（Dual Flavor）设计**：
-  - **`nogvisor`（默认，极限体积版，~10MB）**：剥离 Google gVisor 用户态协议栈，依赖 Linux 原生系统网络栈（System Stack）。内存消耗极少，吞吐性能极高，适合 OpenWrt / Nikki / 经典透明代理。
+  - **`nogvisor`（默认，极限体积版，~10MB）**：剥离 Google gVisor 用户态协议栈，依赖 Linux 原生系统网络栈（System Stack）。内存消耗极少，吞吐性能极高，适合 OpenWrt / Nikki / OpenClash / 经典透明代理。
   - **`gvisor`（全功能版，~14MB）**：保留完整 gVisor 用户态网络栈，适合需要 `tun.stack: mixed` 或 `gvisor` 的复杂环境。
 - ⚡ **多主流架构覆盖**：覆盖 ARM64、AMD64、AMD64-v3 (AVX2)、ARMv7。
-- 🛡️ **安全完整性校验**：所有 Release 均附带 `sha256sums.txt` 校验和。
+- 🚀 **国内免梯极速安装**：内置高可用加速镜像池（自动故障转移 Failover），即使在“断网/无代理”的路由器上也能秒拉升级。
+- 🛡️ **SHA256 密码学强制校验**：每次安装均强制比对官方哈希，100% 免疫任何第三方镜像劫持或篡改投毒。
+- 🔄 **全生态通用自适应**：智能识别并适配 **Nikki**、**OpenClash**、**ShellCrash** 及原生 Linux 系统环境。
 
 ---
 
 ## ⚡ 路由器一键安装 / 原地热更新
 
-在 OpenWrt 终端（通过 SSH 连接到路由器）执行如下命令，即可**自动识别架构、下载最新版本、原地替换并重启服务**：
+在路由器终端（SSH）中，根据你的网络环境执行一行命令即可：
 
-### 1. 默认安装 `nogvisor` 极限精简版（推荐，内存闪存双轻量）：
+### 🇨🇳 中国大陆环境（推荐，无需梯子，内置多镜像高可用加速）：
+```bash
+sh -c "$(curl -fsSL https://ghproxy.net/https://raw.githubusercontent.com/xs314/mihomo-upx-builder/master/install.sh)"
+```
+
+### 🌐 全球通用环境（海外 / 路由器当前已有可用代理）：
 ```bash
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/xs314/mihomo-upx-builder/master/install.sh)"
 ```
 
-### 2. 指定安装 `gvisor` 全功能版：
-```bash
-FLAVOR=gvisor sh -c "$(curl -fsSL https://raw.githubusercontent.com/xs314/mihomo-upx-builder/master/install.sh)"
-```
+---
 
-> **注意（关于 TUN 协议栈配置）**：
-> - 如果使用 `nogvisor` 版本，请确保你的代理插件（如 Nikki）的 TUN 协议栈设置为 `system`（系统原生网络栈）。
->   - 在 Nikki / OpenWrt 中快速设置：
->     ```bash
->     uci set nikki.mixin.tun_stack='system'
->     uci commit nikki
->     /etc/init.d/nikki restart
->     ```
+## 💡 进阶使用参数
+
+你可以通过在命令前添加环境变量来自定义安装行为：
+
+| 参数 | 说明 | 示例 |
+| :--- | :--- | :--- |
+| `FLAVOR=gvisor` | 安装带 gVisor 完整协议栈的版本（默认为 `nogvisor` 极简版） | `FLAVOR=gvisor sh -c "$(curl ...)"` |
+| `TARGET_BIN=/path` | 手动指定内核安装路径（默认自动探测 Nikki / OpenClash / ShellCrash） | `TARGET_BIN=/etc/clash/core sh -c "$(curl ...)"` |
+| `MIRROR=https://...` | 自定义你的私有加速前缀（支持 Cloudflare Workers 反代） | `MIRROR=https://my-proxy.com sh -c "$(curl ...)"` |
+
+> **TUN 协议栈特别说明**：
+> - 如果使用 `nogvisor` 极简版，请确保代理插件中的 TUN 协议栈设置为 `system`（系统原生网络栈）。
+> - 以 Nikki 为例快速配置：
+>   ```bash
+>   uci set nikki.mixin.tun_stack='system'
+>   uci commit nikki
+>   /etc/init.d/nikki restart
+>   ```
 
 ---
 
